@@ -84,3 +84,333 @@ This configurator settings are in fact more than what you need. The configurator
 </pre>
 
 At this point, you should be starting to get the idea that this is an easier way to configure the system for multiple purposes. The next entry will look through the code that implements it.
+
+This is the second entry on creating configuration DSLs in C#. The "previous entry":../dsl-part-i-writing-a-fluent-interface-for-configuration-in-c/ looked at the design of the interface. This one looks at the implementation. Just a small note that the configurator does not use an IoC container to solve the problem of dependency injection.
+
+h1. Separating out settings from values: the configurator and the configuration
+
+This design has two main parts to the implementation. The Configurator and the configuration:
+
+# *Configurator:* this wraps the different types of _settings_ and combinations available
+# *Configuration:* these are the actual _values_ for a setting
+
+It is important that there is this distinction. The configurator allows you to set defaults or set values based on other values. In many values this allows you to code implicit understandings - or even profiles - of the system. 
+
+For example, in the previous entry I talked about three types of profiles: production, acceptance/integration testing and unit testing. The production profile required logging, proxies and credentials to external systems. The tests profiles required stubs and mocks. Now for some code.
+
+h1. Structure of the project
+
+Here's a quick overview of the code for the basic test application with configuration. If you want a copy of src there's one at http://github.com/toddb/DSL-Configuration-Sample. The main point is that there is a folder configuration within the core project. In this case, there is an application that accepts the configuration.
+
+<pre>
+	\Core
+	  Application.cs
+	  ApplicationRunner.cs
+	  IApplication.cs
+	  IAssetService.cs
+	  IConnector.cs
+	  IHttpService.cs
+	  LogService.cs
+	  \Configuration
+	    AppConfiguration.cs
+	    AppConfigurator.cs
+	    Credentials.cs
+	    IAppConfiguration.cs
+	    IAppConfigurator.cs
+	    KnownDotNetConfig.cs
+	    Proxy.cs
+	\Models
+	  Asset.cs
+	\Tests
+	  \Acceptance
+	    ApplicationRunnerTest.cs
+	    IndividualUpdateVisualisationTests.cs
+	  \Configuration
+	    ConfigurationTest.cs
+		\Core
+	    ApplicationRunnerTest.cs
+	    ApplicationTest.cs
+	  App.config
+</pre>
+
+h1. The configuration
+
+The configuration class is as you would expect. It requires a number of values. In this case, it just has public getter/setters on each of them. At this stage, the idea is that any profile of settings requires all of these in some form or rather. 
+
+<pre>
+using System.Net;
+using Core;
+using log4net;
+
+namespace Core.Configuration
+{
+    public class AppConfiguration : IAppConfiguration
+    {
+        public IAssetService AssetService { get; set;}
+        public IConnector IncomingConnector { get; set; }
+        public IConnector OutgoingConnector { get; set; }
+        public NetworkCredential OutgoingCredentials { get; set; }
+        public WebProxy Proxy { get; set;}
+        public string BaseUrl { get; set; }
+        public ILog Logger { get; set; }
+    }
+}
+</pre>
+
+h1. The configurator
+
+The configurator is more complex so let's look at the interface first. It is the list of items that we saw in the first entry. It is important that this interface is as expressive as possible for helping setting up a profile of settings. In this case, you might note that only have one method each for the incoming and outgoing connectors rather than defaults. That is because I would expect people to ignore setting this up explicitly unless they require it. This is implicit knowledge that may be better handled in other ways. There are some others I'll leave for now.
+
+<pre>
+	using System;
+	using Core;
+	using log4net;
+
+	namespace Core.Configuration
+	{
+	    public interface IAppConfigurator : IDisposable
+	    {
+	        void IncomingConnector(IConnector connector);
+	        void OutgoingConnector(IConnector connector);
+	        void BaseUrl(string url);
+	        void BaseUrlFromDotNetConfig();
+	        void UseCredentials(string username, string password);
+	        void UseCredentialsFromDotNetConfig();
+	        void RunWithNoProxy();
+	        void RunWithProxyFromDotNetConfig();
+	        void RunWithProxyAs(string username, string password, string domain, string url);
+	        void UseLog4Net();
+	        void UseLoggerCustom(ILog logService);
+	    }
+	}
+</pre>
+
+Now that you have seen the interface and hopefully have that in your head, now we'll look at the implementation because this is the guts of the DSL. Don't be surprised when you see that there really isn't anything to it. All of the members which are implementing the interface in this case merely update the configuration. Have a read and I'll explain the main simple twist after the code.
+
+<pre>
+	using System;
+	using System.Configuration;
+	using System.Net;
+	using log4net;
+
+	namespace Core.Configuration
+	{
+	    public class AppConfigurator : IAppConfigurator
+	    {
+	        private NetworkCredential _credentials;
+	        private WebProxy _proxy;
+	        private string _url;
+	        private ILog _logger;
+	        private IConnector _incoming;
+	        private IConnector _outgoing;
+
+	        AppConfiguration Create()
+	        {
+	            var cfg = new AppConfiguration
+	                          {
+	                              IncomingConnector = _incoming,
+	                              OutgoingConnector = _outgoing,
+	                              Proxy = _proxy,
+	                              OutgoingCredentials = _credentials,
+	                              BaseUrl = _url,
+	                              Logger = _logger
+	                          };
+	            return cfg;
+	        }
+
+	        public static AppConfiguration New(Action<IAppConfigurator> action)
+	        {
+	            using (var configurator = new AppConfigurator())
+	            {
+	                action(configurator);
+	                return configurator.Create();
+	            }
+	        }
+
+	        public void IncomingConnector(IConnector connector)
+	        {
+	            _incoming = connector;
+	        }
+
+	        public void OutgoingConnector(IConnector connector)
+	        {
+	            _outgoing = connector;
+	        }
+
+	        public void BaseUrl(string url)
+	        {
+	            _url = url;
+	        }
+
+	        public void BaseUrlFromDotNetConfig()
+	        {
+	            _url = ConfigurationManager.AppSettings[KnownDotNetConfig.BaseUrl];
+	        }
+
+	        public void UseCredentials(string username, string password)
+	        {
+	            _credentials = Credentials.Custom(username, password);
+	        }
+
+	        public void UseCredentialsFromDotNetConfig()
+	        {
+	            _credentials = Credentials.DotNetConfig;
+	        }
+
+	        public void RunWithNoProxy()
+	        {
+	            _proxy = null;
+	        }
+
+	        public void RunWithProxyFromDotNetConfig()
+	        {
+	            _proxy = Proxy.DotNetConfig;
+	        }
+
+	        public void RunWithProxyAs(string username, string password, string domain, string url)
+	        {
+	            _proxy = Proxy.Custom(username, password, domain, url);
+	        }
+
+	        public void UseLog4Net()
+	        {
+	            _logger = LogService.log;
+	        }
+
+	        public void UseLoggerCustom(ILog logService)
+	        {
+	            _logger = logService;
+	        }
+
+	        public void Dispose()
+	        {
+
+	        }
+	    }
+	}
+</pre>
+
+All of that is pretty simple. The basis of the interface is to allow the profile either get settings for the @App.Config@ with the methods suffixed with @FromDotNetConfig@ or pass in their own (eg @(username, password)@ or @logService@). The code in those classes is also straightforward.
+
+h1. Classes loading from the DotNet Config
+
+This is very straightforward class which just gets the value through the ConfigurationManager or passes through the username and password. This implementation isn't complex - so you may want to not call ConfigurationManager every time. I'll leave that implementation to you.
+
+<pre>
+	using System.Configuration;
+	using System.Net;
+
+	namespace Core.Configuration
+	{
+	    public class Credentials
+	    {
+	        public static NetworkCredential DotNetConfig
+	        {
+	            get
+	            {
+	                return new NetworkCredential(ConfigurationManager.AppSettings["Asset.Username"],
+	                                             ConfigurationManager.AppSettings["Asset.Password"]);
+	            }
+	        }
+
+	        public static NetworkCredential Custom(string username, string password)
+	        {
+	            return new NetworkCredential(username, password);
+	        }
+
+	    }
+	}
+</pre>	
+
+The same approach is used in the @Credential@ class. In this example, it only returns a webproxy if a url was given in the config. Again, here's another example of implicit profile settings.
+
+<pre>
+	using System;
+	using System.Configuration;
+	using System.Net;
+
+	namespace Core.Configuration
+	{
+	    public class Proxy
+	    {
+
+	        public static WebProxy DotNetConfig
+	        {
+	            get
+	            {
+	                WebProxy proxy = null;
+	                if (!String.IsNullOrEmpty(ConfigurationManager.AppSettings["Proxy.Url"]))
+	                {
+	                    proxy = new WebProxy(ConfigurationManager.AppSettings["Proxy.Url"], true)
+	                                {
+	                                    Credentials = new NetworkCredential(
+	                                        ConfigurationManager.AppSettings["Proxy.Username"],
+	                                        ConfigurationManager.AppSettings["Proxy.Password"],
+	                                        ConfigurationManager.AppSettings["Proxy.Domain"])
+	                                };
+	                }
+	                return proxy;
+	            }
+	        }
+	        public static WebProxy Custom(string username, string password, string domain, string url)
+	        {
+	            return new WebProxy(username, true)
+	                       {
+	                           Credentials = new NetworkCredential(username, password, domain)
+	                       };
+	        }
+
+	    }
+	}
+</pre>
+
+By now you should have seen all the basic getter/setters for values. How now are profiles of settings done?
+
+h1. Consuming the configurator
+
+The configurator initiation code is also pretty straightforward and this implementation uses C# actions. Let's step through the code outline above in two methods @Create@ and @New@. 
+
+When you call the configurator, if you remember, it was through @AppConfigurator.New(configuration)@. This returns a configuration. This is a simple pattern of calling a static method that returns an class instance. In this, @New@ creates a new instance of itself which on the method @Create@ returns a configuration. So where is the real work done?
+
+<pre>
+	AppConfiguration Create()
+	 {
+	     var cfg = new AppConfiguration
+	                   {
+	                       IncomingConnector = _incoming,
+	                       OutgoingConnector = _outgoing,
+	                       Proxy = _proxy,
+	                       OutgoingCredentials = _credentials,
+	                       BaseUrl = _url,
+	                       Logger = _logger
+	                   };
+	     return cfg;
+	 }
+
+	 public static AppConfiguration New(Action<IAppConfigurator> action)
+	 {
+	     using (var configurator = new AppConfigurator())
+	     {
+	         action(configurator);
+	         return configurator.Create();
+	     }
+	 }
+</pre>		
+	
+The real work in done in the one line @action(configurator)@. This line calls the action/lambda that you passed in to create values in the configurator and then when @Create@ is called these are merged and returned. 
+
+So, back to the original code (see below) the @action(configurator)@ will take each @cfg.*@ and run the method. In this case, the first with run @BaseUrlFromDotNetConfig@. If that doesn't make sense, think of it this way, at the point of @action@ in the code, it executes each of the @cfg.*@ lines in the context of that class.
+
+<pre>
+	AppConfigurator.New(cfg =>
+                          {
+                              cfg.BaseUrlFromDotNetConfig();
+                              cfg.RunWithProxyFromDotNetConfig();
+                              cfg.UseCredentialsFromDotNetConfig();
+                              cfg.UseLog4Net();
+                          });
+</pre>
+
+So that's how to get the configuration available for the application start up. You can get a lot more complex but that should get you started. Personally, if you like this approach then go head off in the direction of libraries doing this: nBehave, NHibernate Fluent interface, StoryQ, codecampserver. 
+
+Good luck.
