@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>StoryQ</name>
+    </assembly>
+    <members>
+        <member name="T:StoryQ.Framework.Visitors.FileResources">
+            <summary>
+              A strongly-typed resource class, for looking up localized strings, etc.
+            </summary>
+        </member>
+        <member name="P:StoryQ.Framework.Visitors.FileResources.ResourceManager">
+            <summary>
+              Returns the cached ResourceManager instance used by this class.
+            </summary>
+        </member>
+        <member name="P:StoryQ.Framework.Visitors.FileResources.Culture">
+            <summary>
+              Overrides the current thread's CurrentUICulture property for all
+              resource lookups using this strongly typed resource class.
+            </summary>
+        </member>
+        <member name="P:StoryQ.Framework.Visitors.FileResources.reportStyle">
+             <summary>
+               Looks up a localized string similar to html, body
+            {
+                font-family: verdana, sans-serif;
+                background-color: #bbb;
+            }
+            pre
+            {
+                font-family: lucida console;
+                margin: 0px;
+                padding: 0px;
+            }
+            .padTop
+            {
+                padding-top: 15px;
+                font-style: italic;
+            }
+            .padBottom
+            {
+                padding-bottom: 15px;
+                font-style: italic;
+            }
+            #content
+            {
+            }
+            .
+             </summary>
+        </member>
+        <member name="T:StoryQ.Framework.Story">
+            <summary>
+            Each test should setup one story. At the end of your test, call story.Assert()
+            </summary>
+        </member>
+        <member name="T:StoryQ.Framework.Visitors.AssertVisitor">
+            <summary>
+            Asserts a unit test off a story
+            </summary>
+        </member>
+        <member name="T:StoryQ.Framework.Narrative">
+            <summary>
+            If you need an Narrative, just use a string, or a lamba with no args: ()=>MethodCall("hi")
+            </summary>
+            
+        </member>
+        <member name="M:StoryQ.Framework.Narrative.Exec(System.Linq.Expressions.Expression{System.Action})">
+            <summary>
+            Gives you an exectuable narrative that will run the Action. Check style actions may wish to call Assert.* methods, while setup ones wont.
+            </summary>
+        </member>
+        <member name="M:StoryQ.Framework.Narrative.Exec(System.String,System.Action)">
+            <summary>
+            Gives you an exectuable narrative that will run the Action. Check style actions may wish to call Assert.* methods, while setup ones wont.
+            </summary>
+        </member>
+        <member name="M:StoryQ.Framework.Narrative.Pend(System.String)">
+            <summary>
+            Gives you a narrative that will show up as pending. Alternatively, you can case a string into a Narrative
+            </summary>
+        </member>
+        <member name="M:StoryQ.Framework.Narrative.Text(System.String)">
+            <summary>
+            Gives you a non executable, "description" narrative
+            </summary>
+        </member>
+        <member name="T:StoryQ.Framework.Visitors.CodingVisitor">
+            <summary>
+            visits a story and writes the code for you
+            </summary>
+        </member>
+    </members>
+</doc>
