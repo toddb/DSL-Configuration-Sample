@@ -1,0 +1,86 @@
+I spent the weekend writing a configuration domain specific language (DSL) for a client interface. This interface was lifted from "TopShelf":http://code.google.com/p/topshelf/ project on codeplex after listening to podcast on MassTransit. It was all pretty straightforward and expected as you would imagine. I want to document for myself the process of setting one up for the future and in the process map the code to the patterns that Fowler is outlining in his "new DSL book":http://martinfowler.com/dslwip/. If you are wondering Fowler would call this an internal DSL or "fluent interface":http://www.martinfowler.com/bliki/FluentInterface.html. By the end of this, I should have got through where I did some method chaining, used a strategy pattern and how I think it has helped my in DDD. What I find though is that the configurator code is not simply about writing cleaner, prettier code.
+
+Most importantly, I want to think through how this approach is good for TDD. What I have noticed the most is that by using a fluent interface for the configuration I found that it (a) showed up code smells because I tried to consume code more often and in different ways and (b) helped me refactor other parts of the code because they no longer had dependencies on configuration code.
+
+h1. The problem domain ...
+
+My application is minor application living in a windows service. Every five minutes, it polls a webservice to get a list of items that it must return information about. That external system has a key for the item and relates that key to the key for the same item in the internal system. This is a trivial system that then gets information from the internal system, collates it and then sends that back to the external system. The external caches this information and combines it with its own information. Quite simple - not if you looked at the early versions of the code. 
+
+For this explanation, the system needs to be configured with incoming and outgoing feeds which in turn need network credentials and proxy settings. Both feeds have the same domain, credentials and proxy settings. Early version worked well until you needed to test them - or extend. What I would also like to do is have tests around logging because this system must prove that when it isn't receiving data that someone is getting notified (via logging framework)
+
+What I also require are acceptance tests, integration tests and unit tests. To run each of these it can be hard if you can't turn settings on and off. Unfortunately, Microsoft's app.config isn't really that good at handling all these situations. To be fair it is only XML. But I don't see easy solutions to this and as such I find others and myself manually changing the XML at times to test edge cases. That might be fine at coding time but this leaves little opportunity for automated regression testing. My success criteria was to allow for default values (eg corporate proxy is http:/proxy.mycompany.com), default settings (proxy=on) and custom versions of both (eg no proxy or mock proxy) within the same test run. 
+
+h1. The simplicity of the solution: using blocks for configuration
+
+Let's start with my first consumer code. This is from the code that creates the configuration for the application. This code is pretty simple, although looking at here, it also looks a little wordy. Hopefully you read it as I do. With the new configuration, I'll have the base url with values from the dotnet config, I'll run app with a proxy with the values in the dotnet config, I'll use the network credential values from the dotnet config and finally I'll use log4net. In short, that's the configuration for a corporate network going out through a proxy to a external address which is secure behind credentials.
+
+<pre>
+  var configuration = AppConfigurator.New(cfg =>
+                          {
+                              cfg.BaseUrlFromDotNetConfig();
+                              cfg.RunWithProxyFromDotNetConfig();
+                              cfg.UseCredentialsFromDotNetConfig();
+                              cfg.UseLog4Net();
+                          });
+</pre>
+
+Just a quick note. For those intellisense-ers out there. Yes, when you hit control-space after cfg dot, you see a list of the configuration settings. Here's a preview of the settings:
+
+<pre>
+  BaseUrl(url)
+  BaseUrlFromDotNetConfig
+  RunWithProxyAs(username, password)
+  RunWithProxyFromDotNetConfig
+  UseCredentialsFromDotNetConfig
+  UseCredentials(username, password)
+  UseLog4Net
+  UseCustomLogger
+  OutgoingConnector
+  IncomingConnector
+</pre>
+
+Interestingly, this particular configuration is rarely run - this is the production configuration (and will require production values). All I tend to need from this configuration for development is a configurable BaseUrl. I'm generally doing work on the local machine, so I'm not going to need a proxy or credentials to the external service. In this case, I won't tend to use logging yet. But what I will need is the ability to mock out the external service. But before I go there here is how the configuration is hooked into the application. I pass the configuration into the application. [what I will explain later is that at this point I hand in the configuration values having worked out what they are based on the configuration type.]
+
+<pre>
+  TTLApplication.Run(configuration);
+</pre>
+
+Now to the test. These are far more important for development. In the example below, I want to check that in running my application that the Outgoing connector calls the send method (ie that it sends out). In this case, I use Moq as a framework to mock-out the service. This service will is actually just an Http service makes web requests. The code sets up connector to respond to the Send method, runs the application and then verifies that Send was called.
+
+<pre>
+  [TestMethod]
+  public void CanMockOutgoingConnector()
+  {
+      var connector = new Mock<IOutgoingConnector>();
+      connector.Setup(x => x.Send());
+
+      Application.Run(AppConfigurator.New(cfg =>
+                        { 
+                          cfg.OutgoingConnector(connector.Object)
+                        }));
+      connector.Verify(x => x.Send(), Times.Exactly(1));
+  }
+</pre>
+
+You'll note in both cases, you only setup the what you need. In the first example, the outgoing connector is setup by default. Whereas in the second, it is only the outgoing connector which is setup with a mock.
+
+This configurator settings are in fact more than what you need. The configurator is really good for creating settings - defaults and combinations - but for unit testing it is easier to get down the setting values. Here's a simple example of above. While there's not a lot of difference, the important thing is that you are working through less layers because when it gets more complicated you'll need a greater understanding.
+
+<pre>
+  [TestMethod]
+  public void CanMockOutgoingConnector()
+  {
+      var connector = new Mock<IOutgoingConnector>();
+      connector.Setup(x => x.Send());
+
+      Application.Run(new AppConfiguration
+                          {
+                              IncomingFleet = null,
+                              OutgoingUtilization = connector.Object,
+                              Url = "http://example.com"
+                          });
+      connector.Verify(x => x.Send(), Times.Exactly(1));
+  } 
+</pre>
+
+At this point, you should be starting to get the idea that this is an easier way to configure the system for multiple purposes. The next entry will look through the code that implements it.
